@@ -183,6 +183,14 @@ private:
             case WM_MOUSEMOVE:
                 ui_->onMouseMove(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
                 return 0;
+            case WM_MOUSEWHEEL: {
+                // lParam is in screen coords for WM_MOUSEWHEEL.
+                POINT pt{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+                ScreenToClient(hwnd_, &pt);
+                ui_->onWheel(pt.x, pt.y, GET_WHEEL_DELTA_WPARAM(wParam));
+                fitWindow(false);
+                return 0;
+            }
             case WM_DPICHANGED: {
                 ui_->onDpiChanged();
                 auto* rc = reinterpret_cast<RECT*>(lParam);

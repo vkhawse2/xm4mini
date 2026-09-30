@@ -274,13 +274,31 @@ void Ui::layout() {
         addHit(HitEqHeader, RECT{ cardX, y, cardX + cardW, y + headH });
         y += headH;
         if (eqExpanded_) {
+            // Compact dropdown: a 3-row viewport over the preset list,
+            // the rest reachable via the scrollbar / mouse wheel.
             const auto& presets = sony::protocol::equalizerPresets();
             const int rowH = S(36);
+            const int visRows = 3;
+            const int listH = rowH * visRows;
+            const int contentH = (int)presets.size() * rowH;
+            const int maxScroll = std::max(0, contentH - listH);
+            eqScroll_ = std::clamp(eqScroll_, 0, maxScroll);
+            eqListX_ = cardX;
+            eqListY_ = y;
+            eqListW_ = cardW;
+            eqListH_ = listH;
+            const int scrollW = maxScroll > 0 ? S(12) : 0;
             for (size_t i = 0; i < presets.size(); ++i) {
-                RECT rc{ cardX, y + (int)i * rowH, cardX + cardW, y + (int)(i + 1) * rowH };
+                const int ry0 = y + (int)i * rowH - eqScroll_;
+                const int ry1 = ry0 + rowH;
+                if (ry1 <= y || ry0 >= y + listH)
+                    continue;  // fully outside the viewport
+                RECT rc{ cardX, ry0, cardX + cardW - scrollW, ry1 };
                 addHit(HitEqPreset, rc, static_cast<int>(presets[i].preset));
             }
-            y += (int)presets.size() * rowH;
+            if (maxScroll > 0)
+                addHit(HitEqScroll, RECT{ cardX + cardW - scrollW, y, cardX + cardW, y + listH });
+            y += listH + S(6);
             if (eqUi_.preset == 0xa0) {  // Custom bands
                 y += S(12);
                 const int bw = S(26), bh = S(96);
@@ -316,6 +334,10 @@ Ui::HitId Ui::hitTest(int x, int y, int* data) const {
     for (auto it = hits_.rbegin(); it != hits_.rend(); ++it) {
         const RECT& rc = it->rc;
         if (x >= rc.left && x < rc.right && y >= rc.top && y < rc.bottom) {
+            // Preset rows are drawn through a 3-row viewport; ignore hits
+            // on the parts of a row that are scrolled out of view.
+            if (it->id == HitEqPreset && (y < eqListY_ || y >= eqListY_ + eqListH_))
+                continue;
             if (data)
                 *data = it->data;
             // When disconnected, only menu/power respond.
@@ -325,6 +347,65 @@ Ui::HitId Ui::hitTest(int x, int y, int* data) const {
         }
     }
     return HitNone;
+}
+
+RECT Ui::eqThumbRect() const {
+    const RECT empty{ 0, 0, 0, 0 };
+    if (!eqExpanded_)
+        return empty;
+    const int rowH = S(36), listH = rowH * 3;
+    const int contentH = (int)sony::protocol::equalizerPresets().size() * rowH;
+    const int maxScroll = std::max(0, contentH - listH);
+    if (maxScroll <= 0)
+        return empty;
+    const int scrollW = S(12);
+    const int tx = eqListX_ + eqListW_ - scrollW;
+    const int thumbH = std::max(S(24), listH * listH / contentH);
+    const int thumbY = eqListY_ + eqScroll_ * (listH - thumbH) / maxScroll;
+    return RECT{ tx + S(4), thumbY, tx + scrollW - S(2), thumbY + thumbH };
+}
+
+void Ui::scrollEqToPreset(int preset) {
+    const auto& presets = sony::protocol::equalizerPresets();
+    const int rowH = S(36), listH = rowH * 3;
+    const int contentH = (int)presets.size() * rowH;
+    const int maxScroll = std::max(0, contentH - listH);
+    for (size_t i = 0; i < presets.size(); ++i) {
+        if (static_cast<int>(presets[i].preset) == preset) {
+            const int top = (int)i * rowH;
+            if (top < eqScroll_)
+                eqScroll_ = top;
+            else if (top + rowH > eqScroll_ + listH)
+                eqScroll_ = top + rowH - listH;
+            break;
+        }
+    }
+    eqScroll_ = std::clamp(eqScroll_, 0, maxScroll);
+}
+
+void Ui::onWheel(int x, int y, int delta) {
+    if (!eqExpanded_ || delta == 0)
+        return;
+    layout();
+    bool overEq = false;
+    for (const Hit& ht : hits_) {
+        if (ht.id == HitEqHeader || ht.id == HitEqPreset || ht.id == HitEqScroll) {
+            const RECT& rc = ht.rc;
+            if (x >= rc.left && x < rc.right && y >= rc.top && y < rc.bottom) {
+                overEq = true;
+                break;
+            }
+        }
+    }
+    if (!overEq)
+        return;
+    const int rowH = S(36), listH = rowH * 3;
+    const int contentH = (int)sony::protocol::equalizerPresets().size() * rowH;
+    const int maxScroll = std::max(0, contentH - listH);
+    if (maxScroll <= 0)
+        return;
+    eqScroll_ = std::clamp(eqScroll_ - delta * rowH / 120, 0, maxScroll);
+    InvalidateRect(hwnd_, nullptr, FALSE);
 }
 
 // ---------------------------------------------------------------- drawing ---
@@ -555,7 +636,7 @@ void Ui::paint(HDC hdc) {
         const int cardX = pad, cardW = W - pad * 2;
         int ey = y + S(48);
         if (eqExpanded_) {
-            ey += (int)sony::protocol::equalizerPresets().size() * S(36);
+            ey += S(36) * 3 + S(6);  // 3-row preset viewport
             if (eqUi_.preset == 0xa0)
                 ey += S(12) + S(16) + S(96) + S(34) + S(26) + S(8) + S(6);
             else
@@ -590,6 +671,23 @@ void Ui::paint(HDC hdc) {
         }
         int ry = y + S(48);
         if (eqExpanded_) {
+            const int rowH = S(36);
+            const int listH = rowH * 3;
+            const size_t nPresets = sony::protocol::equalizerPresets().size();
+            const int contentH = (int)nPresets * rowH;
+            const int maxScroll = std::max(0, contentH - listH);
+            const int scrollW = maxScroll > 0 ? S(12) : 0;
+            // Subtle divider between the header and the dropdown list.
+            {
+                Pen dp(1, c_.cardBorder);
+                HGDIOBJ oldP = SelectObject(hdc, dp.h);
+                MoveToEx(hdc, cardX + S(14), ry, nullptr);
+                LineTo(hdc, cardX + cardW - S(14), ry);
+                SelectObject(hdc, oldP);
+            }
+            // Rows, clipped to the 3-row viewport.
+            SaveDC(hdc);
+            IntersectClipRect(hdc, cardX, ry, cardX + cardW - scrollW, ry + listH);
             for (const Hit& ht : hits_) {
                 if (ht.id != HitEqPreset)
                     continue;
@@ -609,7 +707,17 @@ void Ui::paint(HDC hdc) {
                     drawText(hdc, fNormal_, c_.amber, ht.rc.left, ht.rc.top,
                              ht.rc.right - ht.rc.left - S(16), ht.rc.bottom - ht.rc.top, L"✓", DT_RIGHT);
             }
-            ry += (int)sony::protocol::equalizerPresets().size() * S(36);
+            RestoreDC(hdc);
+            // Scrollbar.
+            if (maxScroll > 0) {
+                const int tx = cardX + cardW - scrollW;
+                RECT track{ tx + S(4), ry, tx + scrollW - S(2), ry + listH };
+                roundCard(hdc, track, S(8), c_.trackBg, c_.trackBg);
+                const RECT thumb = eqThumbRect();
+                roundCard(hdc, thumb, S(8), eqScrollDrag_ ? c_.amber : c_.muted,
+                          eqScrollDrag_ ? c_.amber : c_.muted);
+            }
+            ry += listH + S(6);
             if (eqUi_.preset == 0xa0) {
                 ry += S(12);
                 const wchar_t* freqs[5] = {L"400 Hz", L"1 kHz", L"2.5 kHz", L"6.3 kHz", L"16 kHz"};
@@ -777,10 +885,29 @@ void Ui::onLButtonDown(int x, int y) {
             break;
         case HitEqHeader:
             eqExpanded_ = !eqExpanded_;
+            if (eqExpanded_)
+                scrollEqToPreset(eqUi_.preset);  // reveal the active preset
             break;
         case HitEqPreset:
             setEqPresetUi(data);
             break;
+        case HitEqScroll: {
+            const RECT thumb = eqThumbRect();
+            const bool onThumb = x >= thumb.left && x < thumb.right && y >= thumb.top && y < thumb.bottom;
+            if (onThumb) {
+                eqScrollDrag_ = true;
+                eqScrollDragY_ = y;
+                eqScrollDragOff_ = eqScroll_;
+                SetCapture(hwnd_);
+            } else {
+                // Click above/below the thumb pages the list.
+                const int rowH = S(36), listH = rowH * 3;
+                const int contentH = (int)sony::protocol::equalizerPresets().size() * rowH;
+                const int maxScroll = std::max(0, contentH - listH);
+                eqScroll_ = std::clamp(eqScroll_ + (y < thumb.top ? -listH : listH), 0, maxScroll);
+            }
+            break;
+        }
         case HitCbSlider:
         case HitBandSlider:
             dragId_ = id;
@@ -810,6 +937,7 @@ void Ui::onLButtonDown(int x, int y) {
 void Ui::onLButtonUp(int x, int y) {
     (void)x;
     (void)y;
+    eqScrollDrag_ = false;
     if (dragId_ == HitAmbSlider) {
         if (onNc_)
             onNc_(ncUi_);  // commit slider value
@@ -824,6 +952,18 @@ void Ui::onLButtonUp(int x, int y) {
 }
 
 void Ui::onMouseMove(int x, int y) {
+    if (eqScrollDrag_) {
+        const int rowH = S(36), listH = rowH * 3;
+        const int contentH = (int)sony::protocol::equalizerPresets().size() * rowH;
+        const int maxScroll = std::max(0, contentH - listH);
+        const int thumbH = std::max(S(24), listH * listH / contentH);
+        const int range = listH - thumbH;
+        if (range > 0 && maxScroll > 0)
+            eqScroll_ = std::clamp(eqScrollDragOff_ + (y - eqScrollDragY_) * maxScroll / range,
+                                   0, maxScroll);
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    }
     if (dragId_ == HitNone)
         return;
     for (const Hit& ht : hits_) {

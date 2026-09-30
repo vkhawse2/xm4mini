@@ -41,6 +41,7 @@ public:
     void onLButtonDown(int x, int y);
     void onLButtonUp(int x, int y);
     void onMouseMove(int x, int y);
+    void onWheel(int x, int y, int delta);
 
 private:
     enum HitId {
@@ -55,6 +56,7 @@ private:
         HitPill,       // data: 0=Focus 1=Office 2=Aware
         HitEqHeader,
         HitEqPreset,   // data: preset byte
+        HitEqScroll,   // preset-list scrollbar
         HitCbSlider,
         HitBandSlider,  // data: band index 0..4
     };
@@ -96,6 +98,15 @@ private:
     DeviceState dev_;
     std::wstring batteryText_ = L"—";
     bool eqExpanded_ = false;
+
+    // EQ preset dropdown: a 3-row viewport over the full preset list.
+    int eqScroll_ = 0;      // pixel offset of the viewport into the list
+    int eqListX_ = 0, eqListY_ = 0, eqListW_ = 0, eqListH_ = 0;
+    bool eqScrollDrag_ = false;
+    int eqScrollDragY_ = 0;
+    int eqScrollDragOff_ = 0;
+    RECT eqThumbRect() const;      // scrollbar thumb, or empty when none
+    void scrollEqToPreset(int preset);
 
     // Local echo of user edits (device state arrives async and converges).
     sony::protocol::NoiseControlState ncUi_;
