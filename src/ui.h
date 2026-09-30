@@ -37,6 +37,7 @@ public:
     int contentHeight();  // recompute layout, returns needed client height
     void paint(HDC hdc);
     void onDpiChanged();
+    void tickBlink() { blinkOn_ = !blinkOn_; }  // connection-dot blink
 
     void onLButtonDown(int x, int y);
     void onLButtonUp(int x, int y);
@@ -98,6 +99,7 @@ private:
     DeviceState dev_;
     std::wstring batteryText_ = L"—";
     bool eqExpanded_ = false;
+    bool blinkOn_ = true;  // connection-dot blink phase
 
     // EQ preset dropdown: a 3-row viewport over the full preset list.
     int eqScroll_ = 0;      // pixel offset of the viewport into the list

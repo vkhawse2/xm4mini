@@ -118,6 +118,7 @@ public:
         fitWindow(true);
         ShowWindow(hwnd_, showCmd);
         UpdateWindow(hwnd_);
+        SetTimer(hwnd_, 1, 600, nullptr);  // connection-dot blink
         link_->start();
         return true;
     }
@@ -207,6 +208,12 @@ private:
                 if (wParam == DBT_DEVICEARRIVAL)
                     link_->asyncConnectNow();
                 return 0;
+            case WM_TIMER:
+                if (wParam == 1) {
+                    ui_->tickBlink();
+                    InvalidateRect(hwnd_, nullptr, FALSE);
+                }
+                return 0;
             case WM_TRAYICON:
                 if (lParam == WM_RBUTTONUP)
                     showTrayMenu();
@@ -239,6 +246,7 @@ private:
                 }
                 return 0;
             case WM_DESTROY: {
+                KillTimer(hwnd_, 1);
                 AppSettings s = ui_->currentSettings();
                 s.batteryHealth = batteryHealth_;
                 saveSettings(s);
@@ -536,13 +544,26 @@ private:
             case ID_MENU_DATAFOLDER:
                 ShellExecuteW(nullptr, L"open", appDataDir().c_str(), nullptr, nullptr, SW_SHOWNORMAL);
                 break;
-            case ID_MENU_ABOUT:
-                MessageBoxW(hwnd_,
-                            L"XM4 Mini 0.1.0\nMinimal companion for the Sony WH-1000XM4.\n\n"
-                            L"Protocol: reverse-engineered Sony V1 over Bluetooth RFCOMM\n"
-                            L"(vendored from Sound-connect, MIT).",
-                            L"About XM4 Mini", MB_OK | MB_ICONINFORMATION);
+            case ID_MENU_ABOUT: {
+                std::wstring about = L"XM4 Mini 0.1.0\nMinimal companion for the Sony WH-1000XM4.\n\n";
+                if (!lastState_.codec.empty() || !lastState_.firmware.empty()) {
+                    if (!lastState_.codec.empty()) {
+                        std::wstring codec(lastState_.codec.begin(), lastState_.codec.end());
+                        for (wchar_t& ch : codec)
+                            if (ch >= L'a' && ch <= L'z')
+                                ch = static_cast<wchar_t>(ch - 32);
+                        about += L"Codec: " + codec + L"\n";
+                    }
+                    if (!lastState_.firmware.empty())
+                        about += L"Firmware: " + std::wstring(lastState_.firmware.begin(), lastState_.firmware.end()) + L"\n";
+                    about += L"\n";
+                }
+                about += L"Runs from the system tray — close the window to keep it there.\n\n"
+                         L"Protocol: reverse-engineered Sony V1 over Bluetooth RFCOMM\n"
+                         L"(vendored from Sound-connect, MIT).";
+                MessageBoxW(hwnd_, about.c_str(), L"About XM4 Mini", MB_OK | MB_ICONINFORMATION);
                 break;
+            }
         }
     }
 

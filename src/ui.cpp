@@ -216,8 +216,8 @@ void Ui::layout() {
     const int pad = S(18);
     int y = S(16);
 
-    // Header text
-    y += S(52);
+    // Header text (title only; the hamburger sits top-left beside it)
+    y += S(44);
 
     // Menu (top-left) / power (top-right): exact mirror images
     {
@@ -240,8 +240,9 @@ void Ui::layout() {
     // Listening mode label + circles
     y += S(8) + S(18) + S(10);  // caption line + breathing room
     const int circD = S(52);
-    const int gap = (W - pad * 2 - circD * 3) / 2;  // even gaps, full-width row
-    int cx = pad;
+    const int inset = S(10);  // outer circles sit slightly inward
+    const int gap = (W - (pad + inset) * 2 - circD * 3) / 2;  // even gaps
+    int cx = pad + inset;
     const HitId modes[3] = {HitModeAnc, HitModeAmbient, HitModeOff};
     for (int i = 0; i < 3; ++i) {
         RECT rc{ cx, y, cx + circD, y + circD };
@@ -321,7 +322,7 @@ void Ui::layout() {
     }
 
     y += S(12);
-    contentH_ = y + S(20) + S(14);
+    contentH_ = y + S(14);
     (void)rowY;
 }
 
@@ -490,7 +491,6 @@ void Ui::paint(HDC hdc) {
     int y = S(16);
     const int titleX = pad + S(34) + S(12);  // clears the top-left hamburger
     drawText(hdc, fTitle_, c_.text, titleX, y, S(200), S(28), L"WH-1000XM4");
-    drawText(hdc, fSmall_, c_.muted, titleX, y + S(30), S(200), S(16), L"XM4 Mini");
 
     // Menu / power glyphs (no rings)
     for (const Hit& ht : hits_) {
@@ -515,15 +515,17 @@ void Ui::paint(HDC hdc) {
             }
         }
     }
-    y += S(52);
+    y += S(44);
 
     // Device row
     {
         const int rowY = y;
-        // connection dot + text
+        // connection dot + text (dot blinks while connected, centered on the text line)
         const int dotD = S(8);
-        RECT dot{ pad, rowY + S(5), pad + dotD, rowY + S(5) + dotD };
-        circle(hdc, dot, dev_.connected ? c_.green : c_.faint, dev_.connected ? c_.green : c_.faint, 1);
+        const int dotY = rowY + (S(20) - dotD) / 2;
+        RECT dot{ pad, dotY, pad + dotD, dotY + dotD };
+        if (!dev_.connected || blinkOn_)
+            circle(hdc, dot, dev_.connected ? c_.green : c_.faint, dev_.connected ? c_.green : c_.faint, 1);
         const wchar_t* connTxt = dev_.connected ? L"Connected" : L"Looking for WH-1000XM4…";
         drawText(hdc, fNormal_, c_.text, pad + S(14), rowY, S(170), S(20), connTxt);
         if (dev_.connected && !dev_.codec.empty()) {
@@ -788,20 +790,6 @@ void Ui::paint(HDC hdc) {
         }
         y = ey;
     }
-
-    y += S(12);
-    std::wstring status;
-    if (!dev_.codec.empty())
-        status += std::wstring(dev_.codec.begin(), dev_.codec.end());
-    if (!dev_.firmware.empty()) {
-        if (!status.empty())
-            status += L" · ";
-        status += L"fw " + std::wstring(dev_.firmware.begin(), dev_.firmware.end());
-    }
-    if (!status.empty())
-        status += L" · ";
-    status += L"runs from tray";
-    drawText(hdc, fTiny_, c_.faint, pad, y, W - pad * 2, S(20), status, DT_CENTER);
 }
 
 // ---------------------------------------------------------------- input ----
