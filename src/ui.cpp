@@ -686,7 +686,7 @@ void Ui::paint(HDC hdc) {
                 SelectObject(hdc, oldP);
             }
             // Rows, clipped to the 3-row viewport.
-            SaveDC(hdc);
+            const int savedDc = SaveDC(hdc);
             IntersectClipRect(hdc, cardX, ry, cardX + cardW - scrollW, ry + listH);
             for (const Hit& ht : hits_) {
                 if (ht.id != HitEqPreset)
@@ -707,7 +707,7 @@ void Ui::paint(HDC hdc) {
                     drawText(hdc, fNormal_, c_.amber, ht.rc.left, ht.rc.top,
                              ht.rc.right - ht.rc.left - S(16), ht.rc.bottom - ht.rc.top, L"✓", DT_RIGHT);
             }
-            RestoreDC(hdc);
+            RestoreDC(hdc, savedDc);
             // Scrollbar.
             if (maxScroll > 0) {
                 const int tx = cardX + cardW - scrollW;
