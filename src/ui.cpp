@@ -574,12 +574,12 @@ void Ui::paint(HDC hdc) {
         drawText(hdc, fBold_, c_.text, pad + S(38), rowY + S(24), S(90), S(24), pct);
         drawText(hdc, fTiny_, c_.muted, pad, rowY + S(52), S(170), S(16), batteryText_);
 
-        // Headphone render, right side of the device row.
+        // Headphone render, right side of the device row, nudged upward.
         if (hpImg_) {
             Gdiplus::Graphics g(hdc);
             g.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBicubic);
             const int isz = S(138);
-            g.DrawImage(hpImg_, W - pad - isz, rowY, isz, isz);
+            g.DrawImage(hpImg_, W - pad - isz, rowY - S(16), isz, isz);
         }
         y += S(142);
     }
