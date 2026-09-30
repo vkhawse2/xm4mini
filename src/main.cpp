@@ -40,6 +40,10 @@ enum MenuCmd {
     ID_MENU_DATAFOLDER,
     ID_MENU_ABOUT,
     ID_MENU_QUIT,
+    ID_MENU_SPEAKTOCHAT = 2005,
+    ID_MENU_DSEE,
+    ID_MENU_APO_OFF,      // auto power off: do not turn off (index 0)
+    ID_MENU_APO_TAKEOFF,  // auto power off: when taken off (index 5)
     ID_MENU_HEALTH_BASE = 2100  // 2100..2105 -> 50%,60%,70%,80%,90%,100%
 };
 
@@ -248,6 +252,7 @@ private:
     }
 
     void onDeviceState(const DeviceState& st) {
+        lastState_ = st;
         ui_->setDeviceState(st);
         ui_->setBatteryText(batteryTextFor(st));
         updateTrayTip(st);
@@ -266,7 +271,7 @@ private:
         std::transform(codec.begin(), codec.end(), codec.begin(),
                        [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
         in.ldac = codec.find("ldac") != std::string::npos;
-        in.dsee = false;  // DSEE state is not tracked by the app
+        in.dsee = st.dsee;
         in.volumePct = xm4EndpointVolumePct();
         in.healthPct = batteryHealth_;
         return formatBatteryEta(estimateBatteryRuntime(in), st.charging);
@@ -438,6 +443,32 @@ private:
         HMENU menu = CreatePopupMenu();
         AppendMenuW(menu, MF_STRING, ID_MENU_RECONNECT, L"Reconnect");
         AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+        const bool conn = lastState_.connected;
+        auto featureItem = [&](int id, const wchar_t* label, bool checked) {
+            AppendMenuW(menu, MF_STRING, id, label);
+            if (checked)
+                CheckMenuItem(menu, id, MF_BYCOMMAND | MF_CHECKED);
+            if (!conn)
+                EnableMenuItem(menu, id, MF_BYCOMMAND | MF_DISABLED | MF_GRAYED);
+        };
+        featureItem(ID_MENU_SPEAKTOCHAT, L"Speak to Chat", lastState_.speakToChat);
+        // Auto Power Off: the XM4 honors only "do not turn off" and
+        // "when taken off" (verified on hardware), so just those two.
+        HMENU apo = CreatePopupMenu();
+        AppendMenuW(apo, MF_STRING, ID_MENU_APO_OFF, L"Do not turn off");
+        AppendMenuW(apo, MF_STRING, ID_MENU_APO_TAKEOFF, L"When taken off");
+        if (lastState_.autoPowerOff == 5)
+            CheckMenuItem(apo, ID_MENU_APO_TAKEOFF, MF_BYCOMMAND | MF_CHECKED);
+        else
+            CheckMenuItem(apo, ID_MENU_APO_OFF, MF_BYCOMMAND | MF_CHECKED);
+        if (!conn) {
+            EnableMenuItem(apo, ID_MENU_APO_OFF, MF_BYCOMMAND | MF_DISABLED | MF_GRAYED);
+            EnableMenuItem(apo, ID_MENU_APO_TAKEOFF, MF_BYCOMMAND | MF_DISABLED | MF_GRAYED);
+        }
+        AppendMenuW(menu, MF_STRING | MF_POPUP, reinterpret_cast<UINT_PTR>(apo),
+                    L"Auto Power Off");
+        featureItem(ID_MENU_DSEE, L"DSEE Extreme", lastState_.dsee);
+        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
         HMENU health = CreatePopupMenu();
         for (int i = 0; i < 6; ++i) {
             const int pct = 50 + i * 10;
@@ -487,6 +518,18 @@ private:
             case ID_MENU_QUIT:
                 DestroyWindow(hwnd_);
                 break;
+            case ID_MENU_SPEAKTOCHAT:
+                link_->asyncSetSpeakToChat(!lastState_.speakToChat);
+                break;
+            case ID_MENU_DSEE:
+                link_->asyncSetDsee(!lastState_.dsee);
+                break;
+            case ID_MENU_APO_OFF:
+                link_->asyncSetAutoPowerOff(0);
+                break;
+            case ID_MENU_APO_TAKEOFF:
+                link_->asyncSetAutoPowerOff(5);
+                break;
             case ID_MENU_RECONNECT:
                 link_->asyncConnectNow();
                 break;
@@ -513,6 +556,7 @@ private:
     bool trayCharging_ = false;
     std::unique_ptr<Ui> ui_;
     std::unique_ptr<DeviceLink> link_;
+    DeviceState lastState_;  // latest published state; drives menu checkmarks
     int batteryHealth_ = 100;  // persisted; scales the runtime model
     int lastClientH_ = 0;
     bool trayHintShown_ = false;

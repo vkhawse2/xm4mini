@@ -29,6 +29,9 @@ struct DeviceState {
     sony::protocol::EqualizerState eq;
     std::string codec;
     std::string firmware;
+    bool dsee = false;
+    bool speakToChat = false;
+    int autoPowerOff = 0;  // 0 = do not turn off, 5 = when taken off (XM4 honors only these)
 };
 
 class DeviceLink {
@@ -52,6 +55,9 @@ public:
     void setNoiseControl(sony::protocol::NoiseControlState st);
     void setEqPreset(int preset);
     void setEqCustom(int clearBass, const std::array<int, 5>& bands);
+    void asyncSetDsee(bool on);
+    void asyncSetSpeakToChat(bool on);
+    void asyncSetAutoPowerOff(int index);  // 0 = do not turn off, 5 = when taken off
     void refreshBattery();  // poll the battery now instead of waiting
 
 private:
@@ -62,12 +68,15 @@ private:
     void processCommands();
 
     struct Command {
-        enum class Kind { ConnectNow, Disconnect, PowerOff, SetNc, SetEqPreset, SetEqCustom, RefreshBattery };
+        enum class Kind { ConnectNow, Disconnect, PowerOff, SetNc, SetEqPreset, SetEqCustom,
+                          SetDsee, SetSpeakToChat, SetAutoPowerOff, RefreshBattery };
         Kind kind;
         sony::protocol::NoiseControlState nc;
         int eqPreset = 0;
         int eqClearBass = 0;
         std::array<int, 5> eqBands{0, 0, 0, 0, 0};
+        bool boolParam = false;
+        int intParam = 0;
     };
 
     std::thread worker_;

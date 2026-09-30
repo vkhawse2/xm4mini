@@ -107,6 +107,27 @@ void DeviceLink::refreshBattery() {
     commands_.push_back(Command{Command::Kind::RefreshBattery});
 }
 
+void DeviceLink::asyncSetDsee(bool on) {
+    std::lock_guard<std::mutex> lock(cmdMtx_);
+    Command c{Command::Kind::SetDsee};
+    c.boolParam = on;
+    commands_.push_back(c);
+}
+
+void DeviceLink::asyncSetSpeakToChat(bool on) {
+    std::lock_guard<std::mutex> lock(cmdMtx_);
+    Command c{Command::Kind::SetSpeakToChat};
+    c.boolParam = on;
+    commands_.push_back(c);
+}
+
+void DeviceLink::asyncSetAutoPowerOff(int index) {
+    std::lock_guard<std::mutex> lock(cmdMtx_);
+    Command c{Command::Kind::SetAutoPowerOff};
+    c.intParam = index;
+    commands_.push_back(c);
+}
+
 void DeviceLink::teardown() {
     session_.reset();
     DeviceState st;
@@ -175,6 +196,42 @@ void DeviceLink::processCommands() {
                             state_.eq.preset = 0xa0;  // Manual
                             state_.eq.clearBass = c.eqClearBass;
                             state_.eq.bands = c.eqBands;
+                            st = state_;
+                        }
+                        publish(st);
+                    }
+                    break;
+                case Command::Kind::SetDsee:
+                    if (session_) {
+                        session_->proto->setDsee(c.boolParam);
+                        DeviceState st;
+                        {
+                            std::lock_guard<std::mutex> lock(stateMtx_);
+                            state_.dsee = c.boolParam;
+                            st = state_;
+                        }
+                        publish(st);
+                    }
+                    break;
+                case Command::Kind::SetSpeakToChat:
+                    if (session_) {
+                        session_->proto->setSpeakToChat(c.boolParam);
+                        DeviceState st;
+                        {
+                            std::lock_guard<std::mutex> lock(stateMtx_);
+                            state_.speakToChat = c.boolParam;
+                            st = state_;
+                        }
+                        publish(st);
+                    }
+                    break;
+                case Command::Kind::SetAutoPowerOff:
+                    if (session_) {
+                        session_->proto->setAutoPowerOff(c.intParam);
+                        DeviceState st;
+                        {
+                            std::lock_guard<std::mutex> lock(stateMtx_);
+                            state_.autoPowerOff = c.intParam;
                             st = state_;
                         }
                         publish(st);
@@ -251,6 +308,18 @@ bool DeviceLink::tryConnectOnce() {
         }
         try {
             st.eq = sess->proto->getEqualizer();
+        } catch (...) {
+        }
+        try {
+            st.dsee = sess->proto->getDsee();
+        } catch (...) {
+        }
+        try {
+            st.speakToChat = sess->proto->getSpeakToChat();
+        } catch (...) {
+        }
+        try {
+            st.autoPowerOff = sess->proto->getAutoPowerOff();
         } catch (...) {
         }
         try {
