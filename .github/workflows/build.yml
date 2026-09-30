@@ -1,0 +1,33 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -S . -B build -A x64
+
+      - name: Build
+        run: cmake --build build --config Release -- /m
+
+      - name: Package portable zip
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist/xm4mini | Out-Null
+          Copy-Item build/Release/xm4mini.exe dist/xm4mini/
+          Copy-Item -Recurse assets dist/xm4mini/
+          Copy-Item README.md dist/xm4mini/
+          Copy-Item LICENSE dist/xm4mini/
+          Compress-Archive -Path dist/xm4mini -DestinationPath xm4mini-win64.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: xm4mini-win64
+          path: xm4mini-win64.zip
