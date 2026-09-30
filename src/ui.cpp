@@ -523,8 +523,21 @@ void Ui::paint(HDC hdc) {
         const int dotD = S(8);
         RECT dot{ pad, rowY + S(5), pad + dotD, rowY + S(5) + dotD };
         circle(hdc, dot, dev_.connected ? c_.green : c_.faint, dev_.connected ? c_.green : c_.faint, 1);
-        drawText(hdc, fNormal_, c_.text, pad + S(14), rowY, S(170), S(20),
-                 dev_.connected ? L"Connected" : L"Looking for WH-1000XM4…");
+        const wchar_t* connTxt = dev_.connected ? L"Connected" : L"Looking for WH-1000XM4…";
+        drawText(hdc, fNormal_, c_.text, pad + S(14), rowY, S(170), S(20), connTxt);
+        if (dev_.connected && !dev_.codec.empty()) {
+            // Codec badge right after "Connected", same type size.
+            SIZE tsz{};
+            HGDIOBJ oldF = SelectObject(hdc, fNormal_);
+            GetTextExtentPoint32W(hdc, connTxt, static_cast<int>(wcslen(connTxt)), &tsz);
+            SelectObject(hdc, oldF);
+            std::wstring codec = widen(dev_.codec);
+            for (wchar_t& ch : codec)
+                if (ch >= L'a' && ch <= L'z')
+                    ch = static_cast<wchar_t>(ch - 32);
+            drawText(hdc, fNormal_, c_.muted, pad + S(14) + tsz.cx + S(10), rowY,
+                     S(90), S(20), codec.c_str());
+        }
 
         // battery glyph + %
         {
