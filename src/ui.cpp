@@ -490,8 +490,6 @@ void Ui::paint(HDC hdc) {
     // EQ card
     {
         const int cardX = pad, cardW = W - pad * 2;
-        int cardBottom = y + S(48);
-        // measure expanded height
         int ey = y + S(48);
         if (eqExpanded_) {
             ey += (int)sony::protocol::equalizerPresets().size() * S(36);
@@ -669,12 +667,12 @@ void Ui::setClearBass(int cb) {
 }
 
 static int sliderValueFromX(const RECT& rc, int x, int min, int max) {
-    const double p = double(x - rc.left) / double(std::max(1, rc.right - rc.left));
+    const double p = double(x - rc.left) / double(std::max(1L, rc.right - rc.left));
     return std::clamp(int(std::round(min + p * (max - min))), min, max);
 }
 
 static int bandValueFromY(const RECT& rc, int y, int min, int max) {
-    const double p = 1.0 - double(y - rc.top) / double(std::max(1, rc.bottom - rc.top));
+    const double p = 1.0 - double(y - rc.top) / double(std::max(1L, rc.bottom - rc.top));
     return std::clamp(int(std::round(min + p * (max - min))), min, max);
 }
 
