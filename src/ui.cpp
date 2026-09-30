@@ -439,32 +439,33 @@ void Ui::drawToggle(HDC hdc, const RECT& rc, bool on) {
 void Ui::drawModeIcon(HDC hdc, const RECT& rc, HitId which, bool active) {
     const COLORREF col = active ? RGB(0x1a, 0x1a, 0x1a) : RGB(0xcf, 0xcf, 0xcf);
     Gfx gfx(hdc);
-    GpPen p(static_cast<float>(S(2)), col);
+    GpPen p(static_cast<float>(S(12)) / 5.0f, col);  // 2.4px at 96 dpi, bolder glyphs
     const float cx = (rc.left + rc.right) / 2.0f, cy = (rc.top + rc.bottom) / 2.0f;
     if (which == HitModeOff) {
         const float r = static_cast<float>(S(8));
         gfx.g.DrawEllipse(&p.p, cx - r, cy - r, r * 2.0f, r * 2.0f);
     } else if (which == HitModeAnc) {
-        // sound waves radiating to the right, from a small source dot
-        for (int i = 0; i < 3; ++i) {
-            const float r = static_cast<float>(S(5) + i * S(4));
-            gfx.g.DrawArc(&p.p, cx - r, cy - r, r * 2.0f, r * 2.0f, -55.0f, 110.0f);
-        }
-        Gdiplus::SolidBrush b(gcol(col));
-        const float dr = static_cast<float>(S(2));
-        gfx.g.FillEllipse(&b, cx - dr, cy - dr, dr * 2.0f, dr * 2.0f);
+        // waveform bars, tallest in the middle, with a diagonal slash: sound, cancelled
+        const float xs[5] = { -S(6.0f), -S(3.0f), 0.0f, S(3.0f), S(6.0f) };
+        const float hs[5] = { S(2.0f), S(4.5f), S(6.8f), S(4.5f), S(2.0f) };
+        for (int i = 0; i < 5; ++i)
+            gfx.g.DrawLine(&p.p, cx + xs[i], cy - hs[i], cx + xs[i], cy + hs[i]);
+        const float s = static_cast<float>(S(7.2));
+        gfx.g.DrawLine(&p.p, cx - s, cy - s, cx + s, cy + s);
     } else {
-        // person: head, shoulders, and radiating arcs
-        const float hr = static_cast<float>(S(3));
-        const float hy = cy - static_cast<float>(S(6));
-        gfx.g.DrawEllipse(&p.p, cx - hr, hy - hr, hr * 2.0f, hr * 2.0f);
-        const float sr = static_cast<float>(S(7));
-        const float sy = cy + static_cast<float>(S(5));
-        gfx.g.DrawArc(&p.p, cx - sr, sy - sr, sr * 2.0f, sr * 2.0f, 25.0f, 130.0f);
-        for (int i = 0; i < 2; ++i) {
-            const float r = static_cast<float>(S(11) + i * S(4));
-            gfx.g.DrawArc(&p.p, cx - r, cy - r, r * 2.0f, r * 2.0f, -55.0f, 110.0f);
-        }
+        // ambient: three air-flow streamlines with curled ends, sound flowing in
+        auto windLine = [&](float x0, float y, float x1, float r, bool hookUp) {
+            gfx.g.DrawLine(&p.p, x0, y, x1 - r, y);
+            if (hookUp)
+                gfx.g.DrawArc(&p.p, x1 - 2.0f * r, y - 2.0f * r, 2.0f * r, 2.0f * r,
+                              90.0f, 180.0f);
+            else
+                gfx.g.DrawArc(&p.p, x1 - 2.0f * r, y, 2.0f * r, 2.0f * r,
+                              270.0f, -180.0f);
+        };
+        windLine(cx - S(9.2f), cy - S(4.5f), cx + S(5.8f), S(2.8f), true);
+        windLine(cx - S(9.2f), cy + S(0.5f), cx + S(1.8f), S(2.2f), true);
+        windLine(cx - S(9.2f), cy + S(5.0f), cx + S(5.8f), S(2.8f), false);
     }
 }
 
@@ -499,11 +500,25 @@ void Ui::paint(HDC hdc) {
             Gfx gfx(hdc);
             GpPen p(static_cast<float>(S(2)), RGB(0xd7, 0xd7, 0xd7));
             if (ht.id == HitMenu) {
-                const float hw = static_cast<float>(S(6));
-                for (int i = -1; i <= 1; ++i) {
-                    const float yy = cy + i * static_cast<float>(S(5));
-                    gfx.g.DrawLine(&p.p, cx - hw, yy, cx + hw, yy);
-                }
+                // open-end spanner: C-shaped head with a clear mouth at the
+                // upper-right, jaw flats on the mouth, handle to the lower-left
+                const float hx = cx + static_cast<float>(S(2.5));
+                const float hy = cy - static_cast<float>(S(2.5));
+                const float hr = static_cast<float>(S(4.6));
+                // head arc: from 285deg sweeping -300deg (counterclockwise),
+                // leaving a 60deg mouth centered at 315deg (upper-right)
+                gfx.g.DrawArc(&p.p, hx - hr, hy - hr, hr * 2.0f, hr * 2.0f,
+                              285.0f, -300.0f);
+                // jaw tips at 285deg and 345deg; flats run outward along 315deg
+                const float t1x = hx + hr * 0.2588f, t1y = hy - hr * 0.9659f;
+                const float t2x = hx + hr * 0.9659f, t2y = hy - hr * 0.2588f;
+                const float jl = static_cast<float>(S(2.0));
+                gfx.g.DrawLine(&p.p, t1x, t1y, t1x + jl * 0.7071f, t1y - jl * 0.7071f);
+                gfx.g.DrawLine(&p.p, t2x, t2y, t2x + jl * 0.7071f, t2y - jl * 0.7071f);
+                // handle from the lower-left of the head
+                gfx.g.DrawLine(&p.p, hx - hr * 0.7071f, hy + hr * 0.7071f,
+                               cx - static_cast<float>(S(7.0)),
+                               cy + static_cast<float>(S(7.5)));
             } else {
                 // power symbol: ring with a gap at the top, plus the stem
                 const float r = static_cast<float>(S(7));
@@ -890,6 +905,8 @@ void Ui::onLButtonDown(int x, int y) {
             break;
         case HitEqPreset:
             setEqPresetUi(data);
+            if (data != 0xa0)  // Custom keeps the list open so the bands stay reachable
+                eqExpanded_ = false;
             break;
         case HitEqScroll: {
             const RECT thumb = eqThumbRect();

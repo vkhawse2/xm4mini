@@ -324,6 +324,106 @@ private:
             wcscpy_s(nid.szTip, L"XM4 Mini — looking for WH-1000XM4…");
         }
         Shell_NotifyIconW(NIM_MODIFY, &nid);
+        updateTrayIcon(st);
+    }
+
+    // Battery-% pill badge for the tray, in the app's amber/dark theme:
+    // amber pill + dark digits, red when low, bolt when charging,
+    // gray outline only when disconnected/unknown.
+    static HICON renderTrayIcon(int battery, bool connected, bool charging) {
+        using namespace Gdiplus;
+        constexpr int N = 64;
+        Bitmap bmp(N, N, PixelFormat32bppARGB);
+        {
+            Graphics g(&bmp);
+            g.SetSmoothingMode(SmoothingModeAntiAlias);
+            g.SetTextRenderingHint(TextRenderingHintAntiAlias);
+            const RectF pill(4.0f, 16.0f, 56.0f, 32.0f);
+            auto roundedRect = [](GraphicsPath& path, const RectF& r, float rad) {
+                path.AddArc(r.X, r.Y, rad * 2.0f, rad * 2.0f, 180.0f, 90.0f);
+                path.AddArc(r.GetRight() - rad * 2.0f, r.Y, rad * 2.0f, rad * 2.0f,
+                            270.0f, 90.0f);
+                path.AddArc(r.GetRight() - rad * 2.0f, r.GetBottom() - rad * 2.0f,
+                            rad * 2.0f, rad * 2.0f, 0.0f, 90.0f);
+                path.AddArc(r.X, r.GetBottom() - rad * 2.0f, rad * 2.0f, rad * 2.0f,
+                            90.0f, 90.0f);
+                path.CloseFigure();
+            };
+            if (!connected || battery < 0) {
+                GraphicsPath path;
+                roundedRect(path, pill, 16.0f);
+                Pen pen(Color(140, 0xcf, 0xcf, 0xcf), 2.5f);
+                pen.SetLineJoin(LineJoinRound);
+                g.DrawPath(&pen, &path);
+            } else {
+                const int pct = std::max(0, std::min(100, battery));
+                const bool low = !charging && pct <= 20;
+                GraphicsPath path;
+                roundedRect(path, pill, 16.0f);
+                SolidBrush fill(low ? Color(235, 0xff, 0x5a, 0x5f)
+                                    : Color(235, 0xf0, 0xa2, 0x2e));
+                g.FillPath(&fill, &path);
+                const std::wstring txt = std::to_wstring(pct);
+                FontFamily ff(L"Segoe UI");
+                StringFormat fmt;
+                fmt.SetAlignment(StringAlignmentCenter);
+                fmt.SetLineAlignment(StringAlignmentCenter);
+                RectF textBox = pill;
+                if (charging) {
+                    // Bolt tucked into the left end; digits shift right.
+                    textBox.X += 14.0f;
+                    textBox.Width -= 14.0f;
+                    const float bx[8] = {2.6f, 10.0f, 4.0f, 10.0f, -2.6f, -10.0f, -4.0f, -10.0f};
+                    const float by[8] = {-10.0f, -10.0f, 0.0f, 0.0f, 10.0f, 10.0f, 0.0f, 0.0f};
+                    PointF pts[8];
+                    for (int i = 0; i < 8; ++i)
+                        pts[i] = PointF(13.0f + bx[i] * 0.36f, 32.0f + by[i] * 0.36f);
+                    GraphicsPath bolt;
+                    bolt.AddPolygon(pts, 8);
+                    SolidBrush boltBrush(low ? Color(255, 255, 255, 255)
+                                             : Color(255, 0x1a, 0x1a, 0x1a));
+                    g.FillPath(&boltBrush, &bolt);
+                }
+                // Bold digits, shrunk until they fit the pill.
+                std::unique_ptr<Font> font;
+                for (int px = 26; px >= 10; --px) {
+                    font = std::make_unique<Font>(&ff, static_cast<REAL>(px),
+                                                 FontStyleBold, UnitPixel);
+                    RectF bounds;
+                    g.MeasureString(txt.c_str(), -1, font.get(), textBox, &fmt, &bounds);
+                    if (bounds.Width <= textBox.Width - 4.0f)
+                        break;
+                }
+                SolidBrush textBrush(low ? Color(255, 255, 255, 255)
+                                         : Color(255, 0x1a, 0x1a, 0x1a));
+                g.DrawString(txt.c_str(), -1, font.get(), textBox, &fmt, &textBrush);
+            }
+        }
+        HICON h = nullptr;
+        return bmp.GetHICON(&h) == Ok ? h : nullptr;
+    }
+
+    void updateTrayIcon(const DeviceState& st) {
+        const bool connected = st.connected;
+        const int battery = (connected && st.battery >= 0) ? st.battery : -1;
+        const bool charging = connected && st.charging;
+        if (battery == trayBattery_ && connected == trayConnected_ &&
+            charging == trayCharging_)
+            return;
+        trayBattery_ = battery;
+        trayConnected_ = connected;
+        trayCharging_ = charging;
+        HICON h = renderTrayIcon(battery, connected, charging);
+        if (!h)
+            return;
+        trayDynIcon_.reset(h);
+        NOTIFYICONDATAW nid{};
+        nid.cbSize = sizeof(nid);
+        nid.hWnd = hwnd_;
+        nid.uID = 1;
+        nid.uFlags = NIF_ICON;
+        nid.hIcon = trayDynIcon_.get();
+        Shell_NotifyIconW(NIM_MODIFY, &nid);
     }
 
     void showWindow() {
@@ -420,6 +520,10 @@ private:
     HWND hwnd_ = nullptr;
     IconPtr hIcon_;
     HICON trayIcon_ = nullptr;  // owned only when it is our copied resource icon
+    IconPtr trayDynIcon_;        // dynamic battery-% tray icon, redrawn on change
+    int trayBattery_ = -2;       // last values the tray icon was drawn for
+    bool trayConnected_ = false;
+    bool trayCharging_ = false;
     std::unique_ptr<Ui> ui_;
     std::unique_ptr<DeviceLink> link_;
     int batteryHealth_ = 100;  // persisted; scales the runtime model
