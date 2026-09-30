@@ -238,9 +238,9 @@ void Ui::layout() {
     }
 
     // Listening mode label + circles
-    y += S(8);
-    const int circD = S(62);
-    const int gap = S(26);
+    y += S(8) + S(18) + S(10);  // caption line + breathing room
+    const int circD = S(52);
+    const int gap = S(20);
     int cx = pad;
     const HitId modes[3] = {HitModeOff, HitModeAnc, HitModeAmbient};
     for (int i = 0; i < 3; ++i) {
@@ -361,12 +361,12 @@ void Ui::drawModeIcon(HDC hdc, const RECT& rc, HitId which, bool active) {
     GpPen p(static_cast<float>(S(2)), col);
     const float cx = (rc.left + rc.right) / 2.0f, cy = (rc.top + rc.bottom) / 2.0f;
     if (which == HitModeOff) {
-        const float r = static_cast<float>(S(9));
+        const float r = static_cast<float>(S(8));
         gfx.g.DrawEllipse(&p.p, cx - r, cy - r, r * 2.0f, r * 2.0f);
     } else if (which == HitModeAnc) {
         // sound waves radiating to the right, from a small source dot
         for (int i = 0; i < 3; ++i) {
-            const float r = static_cast<float>(S(6) + i * S(5));
+            const float r = static_cast<float>(S(5) + i * S(4));
             gfx.g.DrawArc(&p.p, cx - r, cy - r, r * 2.0f, r * 2.0f, -55.0f, 110.0f);
         }
         Gdiplus::SolidBrush b(gcol(col));
@@ -374,14 +374,14 @@ void Ui::drawModeIcon(HDC hdc, const RECT& rc, HitId which, bool active) {
         gfx.g.FillEllipse(&b, cx - dr, cy - dr, dr * 2.0f, dr * 2.0f);
     } else {
         // person: head, shoulders, and radiating arcs
-        const float hr = static_cast<float>(S(4));
-        const float hy = cy - static_cast<float>(S(7));
+        const float hr = static_cast<float>(S(3));
+        const float hy = cy - static_cast<float>(S(6));
         gfx.g.DrawEllipse(&p.p, cx - hr, hy - hr, hr * 2.0f, hr * 2.0f);
-        const float sr = static_cast<float>(S(9));
-        const float sy = cy + static_cast<float>(S(6));
+        const float sr = static_cast<float>(S(7));
+        const float sy = cy + static_cast<float>(S(5));
         gfx.g.DrawArc(&p.p, cx - sr, sy - sr, sr * 2.0f, sr * 2.0f, 25.0f, 130.0f);
         for (int i = 0; i < 2; ++i) {
-            const float r = static_cast<float>(S(13) + i * S(5));
+            const float r = static_cast<float>(S(11) + i * S(4));
             gfx.g.DrawArc(&p.p, cx - r, cy - r, r * 2.0f, r * 2.0f, -55.0f, 110.0f);
         }
     }
@@ -493,7 +493,7 @@ void Ui::paint(HDC hdc) {
     }
 
     drawText(hdc, fSmall_, c_.muted, pad, y + S(8), S(200), S(18), L"Listening mode");
-    y += S(8) + S(18);
+    y += S(8) + S(18) + S(10);
 
     // Mode circles
     const wchar_t* modeNames[3] = {L"Off", L"ANC", L"Ambient"};
@@ -513,7 +513,7 @@ void Ui::paint(HDC hdc) {
                  (ht.rc.right - ht.rc.left) + S(20), S(18), modeNames[mi], DT_CENTER);
         ++mi;
     }
-    y += S(62) + S(26);
+    y += S(52) + S(26);
 
     const bool ambient = ncUi_.mode == sony::protocol::NoiseControlMode::Ambient;
     if (ambient) {
