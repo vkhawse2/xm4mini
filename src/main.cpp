@@ -141,7 +141,7 @@ private:
                 RECT rc;
                 GetClientRect(hwnd_, &rc);
                 HDC mem = CreateCompatibleDC(hdc);
-                HBITMAP bmp = CreateCompatibleBitmap(hdc, std::max(1, rc.right), std::max(1, rc.bottom));
+                HBITMAP bmp = CreateCompatibleBitmap(hdc, std::max(1L, rc.right), std::max(1L, rc.bottom));
                 HGDIOBJ old = SelectObject(mem, bmp);
                 ui_->paint(mem);
                 BitBlt(hdc, 0, 0, rc.right, rc.bottom, mem, 0, 0, SRCCOPY);
