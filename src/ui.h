@@ -5,6 +5,7 @@
 // fit the content height.
 
 #include <windows.h>
+#include <objidl.h>  // IStream — needed by gdiplus.h when WIN32_LEAN_AND_MEAN is on
 #include <gdiplus.h>
 
 #include <array>
