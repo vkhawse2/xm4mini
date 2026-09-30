@@ -219,11 +219,11 @@ void Ui::layout() {
     // Header text
     y += S(52);
 
-    // Menu / power circles (top-right)
+    // Menu (top-left) / power (top-right): exact mirror images
     {
         const int d = S(34);
         RECT rcPower{ W - pad - d, S(16), W - pad, S(16) + d };
-        RECT rcMenu{ rcPower.left - S(8) - d, S(16), rcPower.left - S(8), S(16) + d };
+        RECT rcMenu{ pad, S(16), pad + d, S(16) + d };
         addHit(HitMenu, rcMenu);
         addHit(HitPower, rcPower);
     }
@@ -488,8 +488,9 @@ void Ui::paint(HDC hdc) {
     fillRect(hdc, full, c_.bg);
 
     int y = S(16);
-    drawText(hdc, fTitle_, c_.text, pad, y, S(220), S(28), L"WH-1000XM4");
-    drawText(hdc, fSmall_, c_.muted, pad, y + S(30), S(220), S(16), L"XM4 Mini");
+    const int titleX = pad + S(34) + S(12);  // clears the top-left hamburger
+    drawText(hdc, fTitle_, c_.text, titleX, y, S(200), S(28), L"WH-1000XM4");
+    drawText(hdc, fSmall_, c_.muted, titleX, y + S(30), S(200), S(16), L"XM4 Mini");
 
     // Menu / power glyphs (no rings)
     for (const Hit& ht : hits_) {
