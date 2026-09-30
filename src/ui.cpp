@@ -240,9 +240,9 @@ void Ui::layout() {
     // Listening mode label + circles
     y += S(8) + S(18) + S(10);  // caption line + breathing room
     const int circD = S(52);
-    const int gap = S(20);
+    const int gap = (W - pad * 2 - circD * 3) / 2;  // even gaps, full-width row
     int cx = pad;
-    const HitId modes[3] = {HitModeOff, HitModeAnc, HitModeAmbient};
+    const HitId modes[3] = {HitModeAnc, HitModeAmbient, HitModeOff};
     for (int i = 0; i < 3; ++i) {
         RECT rc{ cx, y, cx + circD, y + circD };
         addHit(modes[i], rc);
@@ -491,34 +491,20 @@ void Ui::paint(HDC hdc) {
     drawText(hdc, fTitle_, c_.text, pad, y, S(220), S(28), L"WH-1000XM4");
     drawText(hdc, fSmall_, c_.muted, pad, y + S(30), S(220), S(16), L"XM4 Mini");
 
-    // Menu / power circles
+    // Menu / power glyphs (no rings)
     for (const Hit& ht : hits_) {
         if (ht.id == HitMenu || ht.id == HitPower) {
-            circle(hdc, ht.rc, c_.bg, c_.circleBorder, S(2));
             const float cx = (ht.rc.left + ht.rc.right) / 2.0f;
             const float cy = (ht.rc.top + ht.rc.bottom) / 2.0f;
             Gfx gfx(hdc);
             GpPen p(static_cast<float>(S(2)), RGB(0xd7, 0xd7, 0xd7));
             if (ht.id == HitMenu) {
-                // open-end spanner: C-shaped head with a clear mouth at the
-                // upper-right, jaw flats on the mouth, handle to the lower-left
-                const float hx = cx + static_cast<float>(S(2.5));
-                const float hy = cy - static_cast<float>(S(2.5));
-                const float hr = static_cast<float>(S(4.6));
-                // head arc: from 285deg sweeping -300deg (counterclockwise),
-                // leaving a 60deg mouth centered at 315deg (upper-right)
-                gfx.g.DrawArc(&p.p, hx - hr, hy - hr, hr * 2.0f, hr * 2.0f,
-                              285.0f, -300.0f);
-                // jaw tips at 285deg and 345deg; flats run outward along 315deg
-                const float t1x = hx + hr * 0.2588f, t1y = hy - hr * 0.9659f;
-                const float t2x = hx + hr * 0.9659f, t2y = hy - hr * 0.2588f;
-                const float jl = static_cast<float>(S(2.0));
-                gfx.g.DrawLine(&p.p, t1x, t1y, t1x + jl * 0.7071f, t1y - jl * 0.7071f);
-                gfx.g.DrawLine(&p.p, t2x, t2y, t2x + jl * 0.7071f, t2y - jl * 0.7071f);
-                // handle from the lower-left of the head
-                gfx.g.DrawLine(&p.p, hx - hr * 0.7071f, hy + hr * 0.7071f,
-                               cx - static_cast<float>(S(7.0)),
-                               cy + static_cast<float>(S(7.5)));
+                // hamburger: three horizontal lines
+                const float hw = static_cast<float>(S(7));
+                for (int i = -1; i <= 1; ++i) {
+                    const float yy = cy + i * static_cast<float>(S(5));
+                    gfx.g.DrawLine(&p.p, cx - hw, yy, cx + hw, yy);
+                }
             } else {
                 // power symbol: ring with a gap at the top, plus the stem
                 const float r = static_cast<float>(S(7));
@@ -592,11 +578,12 @@ void Ui::paint(HDC hdc) {
     y += S(8) + S(18) + S(10);
 
     // Mode circles
-    const wchar_t* modeNames[3] = {L"Off", L"ANC", L"Ambient"};
-    const HitId modeIds[3] = {HitModeOff, HitModeAnc, HitModeAmbient};
+    const wchar_t* modeNames[3] = {L"ANC", L"Ambient", L"Off"};
+    const HitId modeIds[3] = {HitModeAnc, HitModeAmbient, HitModeOff};
     const sony::protocol::NoiseControlMode modes[3] = {
-        sony::protocol::NoiseControlMode::Off, sony::protocol::NoiseControlMode::NoiseCancelling,
-        sony::protocol::NoiseControlMode::Ambient};
+        sony::protocol::NoiseControlMode::NoiseCancelling,
+        sony::protocol::NoiseControlMode::Ambient,
+        sony::protocol::NoiseControlMode::Off};
     int mi = 0;
     for (const Hit& ht : hits_) {
         bool isMode = ht.id == HitModeOff || ht.id == HitModeAnc || ht.id == HitModeAmbient;
