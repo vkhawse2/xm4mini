@@ -48,6 +48,7 @@ public:
     // Thread-safe; executed on the worker thread.
     void asyncConnectNow();  // force a (re)connect attempt right away
     void asyncDisconnect();
+    void asyncPowerOff();  // send the V1 power-off frame, then drop the link
     void setNoiseControl(sony::protocol::NoiseControlState st);
     void setEqPreset(int preset);
     void setEqCustom(int clearBass, const std::array<int, 5>& bands);
@@ -61,7 +62,7 @@ private:
     void processCommands();
 
     struct Command {
-        enum class Kind { ConnectNow, Disconnect, SetNc, SetEqPreset, SetEqCustom, RefreshBattery };
+        enum class Kind { ConnectNow, Disconnect, PowerOff, SetNc, SetEqPreset, SetEqCustom, RefreshBattery };
         Kind kind;
         sony::protocol::NoiseControlState nc;
         int eqPreset = 0;

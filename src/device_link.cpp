@@ -75,6 +75,11 @@ void DeviceLink::asyncDisconnect() {
     commands_.push_back(Command{Command::Kind::Disconnect});
 }
 
+void DeviceLink::asyncPowerOff() {
+    std::lock_guard<std::mutex> lock(cmdMtx_);
+    commands_.push_back(Command{Command::Kind::PowerOff});
+}
+
 void DeviceLink::setNoiseControl(sony::protocol::NoiseControlState st) {
     std::lock_guard<std::mutex> lock(cmdMtx_);
     Command c{Command::Kind::SetNc};
@@ -123,6 +128,18 @@ void DeviceLink::processCommands() {
                         tryConnectOnce();
                     break;
                 case Command::Kind::Disconnect:
+                    teardown();
+                    break;
+                case Command::Kind::PowerOff:
+                    if (session_) {
+                        try {
+                            // V1 power-off frame (22 00 01). The headset drops
+                            // the link as it shuts down, so a missing ACK —
+                            // or any I/O error here — still means success.
+                            session_->proto->powerOff();
+                        } catch (...) {
+                        }
+                    }
                     teardown();
                     break;
                 case Command::Kind::SetNc:

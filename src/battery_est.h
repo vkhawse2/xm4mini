@@ -1,39 +1,39 @@
 #pragma once
-// Battery time-left estimator.
+// Battery runtime model, ported from the "Battery Runtime Estimator"
+// calculator (capacity/draw model):
 //
-// Keeps a small on-disk log of (timestamp, level) samples taken while the
-// headphones are discharging, fits a least-squares line to the recent
-// history, and converts the drain rate into "≈ 7 h 15 min left".
-// Tiny by design: a capped CSV, no database, no background work.
+//   cell capacity 1000 mAh, base playback draw 26 mA,
+//   +7.3 mA when the noise-processing DSP is on (ANC or Ambient),
+//   x1.3 for LDAC, x1.3 for DSEE, volume scales 1 + (vol-50)*0.004,
+//   usable capacity scaled by battery health.
+//
+// Unlike the old discharge-history fit, this gives an instant estimate
+// from the live listening state — no warm-up samples, no log file.
 
 #include <string>
-#include <vector>
-#include <ctime>
 
-class BatteryEstimator {
-public:
-    explicit BatteryEstimator(const std::wstring& csvPath);
-
-    // Call on every battery poll. Samples are only stored while discharging.
-    void addSample(int levelPercent, bool charging);
-
-    // Human text for the current state, e.g. L"≈ 7 h 15 min left".
-    // Returns L"Charging…" while charging, L"—" when there is not
-    // enough history yet.
-    std::wstring text(int levelPercent, bool charging);
-
-private:
-    struct Sample {
-        std::time_t t{};
-        int level{};
-    };
-
-    std::wstring path_;
-    std::vector<Sample> samples_;
-
-    void load();
-    void persist();
-    void prune(std::time_t now);
-    // Drain rate in percent per hour, > 0 while discharging. -1 when unknown.
-    double drainPerHour() const;
+struct BatteryModelInputs {
+    int batteryPct = -1;        // current charge 0..100, -1 = unknown
+    bool processingOn = false;  // ANC or Ambient mode (DSP + mics active)
+    bool ldac = false;          // LDAC codec (otherwise AAC/SBC)
+    bool dsee = false;          // DSEE upscaling (not tracked by the app; off)
+    int volumePct = 50;         // Windows endpoint volume, 10..100
+    int healthPct = 100;        // battery health, 50..100 (settings)
 };
+
+struct BatteryModelResult {
+    double runtimeHours = 0.0;   // at the current charge
+    double currentDrawMa = 0.0;  // estimated total draw
+    bool valid = false;
+};
+
+BatteryModelResult estimateBatteryRuntime(const BatteryModelInputs& in);
+
+// Human text, e.g. L"≈ 7 h 15 min left · ~34 mA".
+// L"Charging…" while charging, L"—" when the estimate is not valid.
+std::wstring formatBatteryEta(const BatteryModelResult& r, bool charging);
+
+// Master volume (clamped to 10..100) of the WH-1000XM4 render endpoint.
+// Falls back to 50 when the endpoint is not present.
+// Requires COM initialized on the calling thread.
+int xm4EndpointVolumePct();

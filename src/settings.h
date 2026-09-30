@@ -10,6 +10,7 @@ struct AppSettings {
     int clearBass = 0;                         // -10..10
     int ambientLevel = 8;                      // 1..20
     bool focusOnVoice = false;
+    int batteryHealth = 100;                   // 50..100, scales the runtime model
 };
 
 std::wstring appDataDir();  // %APPDATA%/XM4Mini (created on demand)

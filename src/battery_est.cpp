@@ -1,133 +1,107 @@
+// Battery runtime model — direct C++ port of the "Battery Runtime
+// Estimator" calculator's math.
+
 #include "battery_est.h"
 
-#include <cstdio>
-#include <cwchar>
+#include <windows.h>
+#include <objbase.h>
+#include <propkey.h>  // PROPID — must come before functiondiscoverykeys_devpkey.h
+#include <functiondiscoverykeys_devpkey.h>
+#include <mmdeviceapi.h>
+#include <endpointvolume.h>
 
-namespace {
+#include <algorithm>
+#include <cmath>
+#include <cwctype>
+#include <string>
 
-constexpr std::time_t kWindowSecs = 24 * 3600;  // only use the last 24 h
-constexpr size_t kMaxSamples = 2000;
-constexpr double kMinSpanSecs = 20 * 60;        // need >= 20 min of history
-constexpr double kMinDrainPerHour = 0.05;       // ignore noise below this
+BatteryModelResult estimateBatteryRuntime(const BatteryModelInputs& in) {
+    BatteryModelResult r;
+    if (in.batteryPct < 0)
+        return r;
+    // Constants straight from the calculator.
+    constexpr double kCapacityMah = 1000.0;
+    constexpr double kBasePlaybackMa = 26.0;
+    constexpr double kProcessingDrawMa = 7.3;  // ANC/Ambient DSP + mics
 
-}  // namespace
-
-BatteryEstimator::BatteryEstimator(const std::wstring& csvPath) : path_(csvPath) {
-    load();
+    const double volMult = 1.0 + (std::clamp(in.volumePct, 10, 100) - 50) * 0.004;
+    const double dseeMult = in.dsee ? 1.3 : 1.0;
+    const double codecMult = in.ldac ? 1.3 : 1.0;
+    const double playbackDraw = kBasePlaybackMa * codecMult * dseeMult * volMult;
+    const double totalDraw = playbackDraw + (in.processingOn ? kProcessingDrawMa : 0.0);
+    if (!(totalDraw > 0.0))
+        return r;
+    const double effectiveCapacity = kCapacityMah * (std::clamp(in.healthPct, 50, 100) / 100.0);
+    const double fullHours = effectiveCapacity / totalDraw;
+    r.runtimeHours = (std::clamp(in.batteryPct, 0, 100) / 100.0) * fullHours;
+    r.currentDrawMa = totalDraw;
+    r.valid = true;
+    return r;
 }
 
-void BatteryEstimator::load() {
-    samples_.clear();
-    FILE* f = nullptr;
-    if (_wfopen_s(&f, path_.c_str(), L"r") != 0 || !f)
-        return;
-    long long t = 0;
-    int level = 0;
-    while (fwscanf_s(f, L"%lld,%d\n", &t, &level) == 2) {
-        if (level >= 0 && level <= 100)
-            samples_.push_back(Sample{static_cast<std::time_t>(t), level});
-        if (samples_.size() > kMaxSamples)
-            break;
-    }
-    fclose(f);
-    prune(std::time(nullptr));
-}
-
-void BatteryEstimator::prune(std::time_t now) {
-    while (!samples_.empty() && now - samples_.front().t > kWindowSecs)
-        samples_.erase(samples_.begin());
-    while (samples_.size() > kMaxSamples)
-        samples_.erase(samples_.begin());
-}
-
-void BatteryEstimator::persist() {
-    FILE* f = nullptr;
-    if (_wfopen_s(&f, path_.c_str(), L"w") != 0 || !f)
-        return;
-    for (const auto& s : samples_)
-        fwprintf_s(f, L"%lld,%d\n", static_cast<long long>(s.t), s.level);
-    fclose(f);
-}
-
-void BatteryEstimator::addSample(int levelPercent, bool charging) {
-    if (levelPercent < 0 || levelPercent > 100)
-        return;
-    const std::time_t now = std::time(nullptr);
-    if (charging) {
-        // A charge invalidates the old drain curve; keep history only if the
-        // level did not jump (i.e. it was just plugged in without charging).
-        if (!samples_.empty() && levelPercent > samples_.back().level + 1) {
-            samples_.clear();
-            persist();
-        }
-        return;
-    }
-    prune(now);
-    if (!samples_.empty()) {
-        const Sample& last = samples_.back();
-        if (levelPercent > last.level) {
-            // Level rose while not charging (measurement noise / reconnect):
-            // restart the curve rather than fit nonsense.
-            samples_.clear();
-        } else if (levelPercent == last.level && now - last.t < 300) {
-            return;  // no new information
-        }
-    }
-    samples_.push_back(Sample{now, levelPercent});
-    if (samples_.size() > kMaxSamples) {
-        samples_.erase(samples_.begin(), samples_.begin() + 500);
-    }
-    persist();
-}
-
-double BatteryEstimator::drainPerHour() const {
-    const size_t n = samples_.size();
-    if (n < 4)
-        return -1.0;
-    const double span = std::difftime(samples_.back().t, samples_.front().t);
-    if (span < kMinSpanSecs)
-        return -1.0;
-    // Least-squares slope of level over time (percent per second).
-    double sumT = 0, sumL = 0, sumTT = 0, sumTL = 0;
-    const double t0 = static_cast<double>(samples_.front().t);
-    for (const auto& s : samples_) {
-        const double t = static_cast<double>(s.t) - t0;
-        const double l = static_cast<double>(s.level);
-        sumT += t;
-        sumL += l;
-        sumTT += t * t;
-        sumTL += t * l;
-    }
-    const double denom = n * sumTT - sumT * sumT;
-    if (denom <= 0)
-        return -1.0;
-    const double slopePerSec = (n * sumTL - sumT * sumL) / denom;
-    const double drain = -slopePerSec * 3600.0;  // positive while discharging
-    return drain >= kMinDrainPerHour ? drain : -1.0;
-}
-
-std::wstring BatteryEstimator::text(int levelPercent, bool charging) {
-    if (levelPercent < 0 || levelPercent > 100)
-        return L"—";
+std::wstring formatBatteryEta(const BatteryModelResult& r, bool charging) {
     if (charging)
         return L"Charging…";
-    const double drain = drainPerHour();
-    if (drain <= 0)
+    if (!r.valid)
         return L"—";
-    const double hours = levelPercent / drain;
+    const int totalMin = static_cast<int>(std::lround(r.runtimeHours * 60.0));
     wchar_t buf[64]{};
-    if (hours < 1.0) {
-        swprintf_s(buf, L"≈ %d min left", static_cast<int>(hours * 60.0 + 0.5));
-    } else if (hours < 24.0) {
-        const int h = static_cast<int>(hours);
-        const int m = static_cast<int>((hours - h) * 60.0 + 0.5);
-        if (m == 60)
-            swprintf_s(buf, L"≈ %d h left", h + 1);
-        else
-            swprintf_s(buf, L"≈ %d h %d min left", h, m);
-    } else {
-        swprintf_s(buf, L"≈ %d day%s left", static_cast<int>(hours / 24.0 + 0.5),
-                   hours >= 48.0 ? L"s" : L"");
-    }
+    swprintf_s(buf, L"≈ %d h %02d min left · ~%.0f mA", totalMin / 60, totalMin % 60,
+               r.currentDrawMa);
     return buf;
+}
+
+int xm4EndpointVolumePct() {
+    int vol = 50;  // fallback when the endpoint is not present
+    IMMDeviceEnumerator* enumerator = nullptr;
+    if (FAILED(CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL,
+                                __uuidof(IMMDeviceEnumerator),
+                                reinterpret_cast<void**>(&enumerator))) ||
+        !enumerator)
+        return vol;
+
+    IMMDeviceCollection* coll = nullptr;
+    if (SUCCEEDED(enumerator->EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE, &coll)) && coll) {
+        UINT count = 0;
+        if (SUCCEEDED(coll->GetCount(&count))) {
+            for (UINT i = 0; i < count; ++i) {
+                IMMDevice* dev = nullptr;
+                if (FAILED(coll->Item(i, &dev)) || !dev)
+                    continue;
+                bool match = false;
+                IPropertyStore* ps = nullptr;
+                if (SUCCEEDED(dev->OpenPropertyStore(STGM_READ, &ps)) && ps) {
+                    PROPVARIANT pv;
+                    PropVariantInit(&pv);
+                    if (SUCCEEDED(ps->GetValue(PKEY_Device_FriendlyName, &pv)) &&
+                        pv.vt == VT_LPWSTR && pv.pwszVal) {
+                        std::wstring name(pv.pwszVal);
+                        std::transform(name.begin(), name.end(), name.begin(),
+                                       [](wchar_t c) { return std::towlower(c); });
+                        match = name.find(L"wh-1000xm4") != std::wstring::npos;
+                    }
+                    PropVariantClear(&pv);
+                    ps->Release();
+                }
+                if (match) {
+                    IAudioEndpointVolume* ev = nullptr;
+                    if (SUCCEEDED(dev->Activate(__uuidof(IAudioEndpointVolume), CLSCTX_ALL,
+                                                nullptr, reinterpret_cast<void**>(&ev))) &&
+                        ev) {
+                        float scalar = 0.5f;
+                        if (SUCCEEDED(ev->GetMasterVolumeLevelScalar(&scalar)))
+                            vol = std::clamp(static_cast<int>(std::lround(scalar * 100.0f)), 10,
+                                             100);
+                        ev->Release();
+                    }
+                    dev->Release();
+                    break;
+                }
+                dev->Release();
+            }
+        }
+        coll->Release();
+    }
+    enumerator->Release();
+    return vol;
 }

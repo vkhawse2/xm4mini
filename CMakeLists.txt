@@ -57,6 +57,8 @@ target_link_libraries(xm4mini PRIVATE
     Bthprops
     gdiplus
     shell32
+    dwmapi
+    ole32
 )
 
 if(MSVC)

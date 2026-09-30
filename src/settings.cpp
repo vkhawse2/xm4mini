@@ -34,6 +34,11 @@ AppSettings loadSettings() {
     if (s.ambientLevel < 1) s.ambientLevel = 1;
     if (s.ambientLevel > 20) s.ambientLevel = 20;
     s.focusOnVoice = GetPrivateProfileIntW(L"nc", L"focusOnVoice", 0, p.c_str()) != 0;
+    s.batteryHealth = GetPrivateProfileIntW(L"battery", L"health", 100, p.c_str());
+    if (s.batteryHealth < 50)
+        s.batteryHealth = 50;
+    if (s.batteryHealth > 100)
+        s.batteryHealth = 100;
     return s;
 }
 
@@ -54,4 +59,5 @@ void saveSettings(const AppSettings& s) {
     writeInt(p, L"eq", L"clearBass", s.clearBass);
     writeInt(p, L"nc", L"ambientLevel", s.ambientLevel);
     writeInt(p, L"nc", L"focusOnVoice", s.focusOnVoice ? 1 : 0);
+    writeInt(p, L"battery", L"health", s.batteryHealth);
 }

@@ -7,8 +7,16 @@
 #include <gdiplus.h>
 #include <shellapi.h>
 #include <dbt.h>
+#include <dwmapi.h>
+#include <objbase.h>  // CoInitializeEx for the endpoint-volume lookup
+
+// DWMWA_USE_IMMERSIVE_DARK_MODE (20) needs a recent SDK; fall back gracefully.
+#ifndef DWMWA_USE_IMMERSIVE_DARK_MODE
+#define DWMWA_USE_IMMERSIVE_DARK_MODE 20
+#endif
 
 #include <algorithm>
+#include <cctype>
 #include <memory>
 #include <string>
 
@@ -27,7 +35,13 @@ constexpr wchar_t kClassName[] = L"XM4MiniWindow";
 constexpr wchar_t kMutexName[] = L"XM4MiniSingleInstance";
 
 enum TrayCmd { ID_TRAY_ANC = 1001, ID_TRAY_AMBIENT, ID_TRAY_OFF, ID_TRAY_SHOW, ID_TRAY_QUIT };
-enum MenuCmd { ID_MENU_RECONNECT = 2001, ID_MENU_DATAFOLDER, ID_MENU_ABOUT, ID_MENU_QUIT };
+enum MenuCmd {
+    ID_MENU_RECONNECT = 2001,
+    ID_MENU_DATAFOLDER,
+    ID_MENU_ABOUT,
+    ID_MENU_QUIT,
+    ID_MENU_HEALTH_BASE = 2100  // 2100..2105 -> 50%,60%,70%,80%,90%,100%
+};
 
 int dpiOf(HWND hwnd) {
     const int d = GetDpiForWindow(hwnd);
@@ -40,8 +54,7 @@ int scaled(HWND hwnd, int px) { return MulDiv(px, dpiOf(hwnd), 96); }
 class App {
 public:
     App(HINSTANCE inst, int dpi)
-        : inst_(inst), ui_(nullptr), link_(std::make_unique<DeviceLink>()),
-          estimator_(std::make_unique<BatteryEstimator>(appDataDir() + L"\\battery.csv")) {
+        : inst_(inst), ui_(nullptr), link_(std::make_unique<DeviceLink>()) {
         (void)dpi;
     }
 
@@ -76,13 +89,21 @@ public:
         if (!hwnd_)
             return false;
 
+        // Dark title bar to match the app theme (Windows 10 1809+).
+        {
+            const BOOL dark = TRUE;
+            DwmSetWindowAttribute(hwnd_, DWMWA_USE_IMMERSIVE_DARK_MODE, &dark, sizeof(dark));
+        }
+
         ui_ = std::make_unique<Ui>(hwnd_);
-        ui_->applySettings(loadSettings());
+        const AppSettings loaded = loadSettings();
+        ui_->applySettings(loaded);
+        batteryHealth_ = loaded.batteryHealth;
         ui_->setCallbacks(
             [this](sony::protocol::NoiseControlState st) { link_->setNoiseControl(st); },
             [this](int preset) { link_->setEqPreset(preset); },
             [this](int cb, const std::array<int, 5>& bands) { link_->setEqCustom(cb, bands); },
-            [this] { showMenuPopup(); }, [this] { link_->asyncDisconnect(); });
+            [this] { showMenuPopup(); }, [this] { link_->asyncPowerOff(); });
 
         link_->setStateCallback([this](const DeviceState& st) {
             auto* copy = new DeviceState(st);
@@ -205,27 +226,42 @@ private:
                     Shell_NotifyIconW(NIM_MODIFY, &nid);
                 }
                 return 0;
-            case WM_DESTROY:
-                saveSettings(ui_->currentSettings());
+            case WM_DESTROY: {
+                AppSettings s = ui_->currentSettings();
+                s.batteryHealth = batteryHealth_;
+                saveSettings(s);
                 removeTrayIcon();
                 link_->stop();
                 PostQuitMessage(0);
                 return 0;
+            }
         }
         return DefWindowProcW(hwnd_, msg, wParam, lParam);
     }
 
     void onDeviceState(const DeviceState& st) {
         ui_->setDeviceState(st);
-        if (st.connected && st.battery >= 0) {
-            estimator_->addSample(st.battery, st.charging);
-            ui_->setBatteryText(estimator_->text(st.battery, st.charging));
-        } else if (!st.connected) {
-            ui_->setBatteryText(L"—");
-        }
+        ui_->setBatteryText(batteryTextFor(st));
         updateTrayTip(st);
         fitWindow(false);
         InvalidateRect(hwnd_, nullptr, FALSE);
+    }
+
+    // Runtime estimate from the live listening state (capacity/draw model).
+    std::wstring batteryTextFor(const DeviceState& st) {
+        if (!st.connected || st.battery < 0)
+            return L"—";
+        BatteryModelInputs in;
+        in.batteryPct = st.battery;
+        in.processingOn = st.nc.mode != sony::protocol::NoiseControlMode::Off;
+        std::string codec = st.codec;
+        std::transform(codec.begin(), codec.end(), codec.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        in.ldac = codec.find("ldac") != std::string::npos;
+        in.dsee = false;  // DSEE state is not tracked by the app
+        in.volumePct = xm4EndpointVolumePct();
+        in.healthPct = batteryHealth_;
+        return formatBatteryEta(estimateBatteryRuntime(in), st.charging);
     }
 
     void fitWindow(bool force) {
@@ -272,7 +308,7 @@ private:
         nid.uFlags = NIF_TIP | NIF_SHOWTIP;
         if (st.connected && st.battery >= 0) {
             std::wstring tip = L"XM4 Mini — " + std::to_wstring(st.battery) + L"%";
-            const std::wstring eta = estimator_->text(st.battery, st.charging);
+            const std::wstring eta = batteryTextFor(st);
             if (!eta.empty() && eta != L"—")
                 tip += L" (" + eta + L")";
             wcscpy_s(nid.szTip, tip.c_str());
@@ -307,6 +343,17 @@ private:
         HMENU menu = CreatePopupMenu();
         AppendMenuW(menu, MF_STRING, ID_MENU_RECONNECT, L"Reconnect");
         AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+        HMENU health = CreatePopupMenu();
+        for (int i = 0; i < 6; ++i) {
+            const int pct = 50 + i * 10;
+            wchar_t label[16]{};
+            swprintf_s(label, L"%d%%", pct);
+            AppendMenuW(health, MF_STRING, ID_MENU_HEALTH_BASE + i, label);
+            if (pct == batteryHealth_)
+                CheckMenuItem(health, ID_MENU_HEALTH_BASE + i, MF_BYCOMMAND | MF_CHECKED);
+        }
+        AppendMenuW(menu, MF_STRING | MF_POPUP, reinterpret_cast<UINT_PTR>(health),
+                    L"Battery health");
         AppendMenuW(menu, MF_STRING, ID_MENU_DATAFOLDER, L"Open data folder");
         AppendMenuW(menu, MF_STRING, ID_MENU_ABOUT, L"About XM4 Mini");
         AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
@@ -320,6 +367,11 @@ private:
 
     void onCommand(int id) {
         using Mode = sony::protocol::NoiseControlMode;
+        if (id >= ID_MENU_HEALTH_BASE && id < ID_MENU_HEALTH_BASE + 6) {
+            batteryHealth_ = 50 + (id - ID_MENU_HEALTH_BASE) * 10;
+            link_->refreshBattery();  // republish -> the estimate text recomputes
+            return;
+        }
         switch (id) {
             case ID_TRAY_ANC:
             case ID_TRAY_AMBIENT:
@@ -362,13 +414,15 @@ private:
     HICON trayIcon_ = nullptr;  // owned only when it is our copied resource icon
     std::unique_ptr<Ui> ui_;
     std::unique_ptr<DeviceLink> link_;
-    std::unique_ptr<BatteryEstimator> estimator_;
+    int batteryHealth_ = 100;  // persisted; scales the runtime model
     int lastClientH_ = 0;
     bool trayHintShown_ = false;
 };
 
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+    // COM for the audio-endpoint volume lookup (main thread only).
+    CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
 
     HANDLE mutex = CreateMutexW(nullptr, TRUE, kMutexName);
     if (GetLastError() == ERROR_ALREADY_EXISTS) {
@@ -379,8 +433,12 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
         }
         if (mutex)
             CloseHandle(mutex);
+        CoUninitialize();
         return 0;
     }
+
+    // The discharge-history CSV is superseded by the runtime model; drop it.
+    DeleteFileW((appDataDir() + L"\\battery.csv").c_str());
 
     Gdiplus::GdiplusStartupInput gdiplusInput;
     ULONG_PTR gdiplusToken = 0;
@@ -396,5 +454,6 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
         ReleaseMutex(mutex);
         CloseHandle(mutex);
     }
+    CoUninitialize();
     return exitCode;
 }

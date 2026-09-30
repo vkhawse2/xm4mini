@@ -32,24 +32,73 @@ void fillRect(HDC hdc, const RECT& rc, COLORREF c) {
     FillRect(hdc, &rc, b.h);
 }
 
+// --- Antialiased GDI+ drawing -------------------------------------------
+// All icon/shape work goes through these so edges are smooth at any DPI.
+// (The old raw-GDI versions drew jagged, muddy-looking glyphs.)
+
+inline Gdiplus::Color gcol(COLORREF c) {
+    return Gdiplus::Color(255, GetRValue(c), GetGValue(c), GetBValue(c));
+}
+
+struct Gfx {
+    Gdiplus::Graphics g;
+    explicit Gfx(HDC hdc) : g(hdc) {
+        g.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
+        g.SetPixelOffsetMode(Gdiplus::PixelOffsetModeHalf);
+    }
+};
+
+struct GpPen {
+    Gdiplus::Pen p;
+    GpPen(float w, COLORREF c) : p(gcol(c), w) {
+        p.SetStartCap(Gdiplus::LineCapRound);
+        p.SetEndCap(Gdiplus::LineCapRound);
+        p.SetLineJoin(Gdiplus::LineJoinRound);
+    }
+};
+
+static void addRoundedRect(Gdiplus::GraphicsPath& path, const RECT& rc, int radius) {
+    const float x = static_cast<float>(rc.left), y = static_cast<float>(rc.top);
+    const float w = static_cast<float>(rc.right - rc.left);
+    const float h = static_cast<float>(rc.bottom - rc.top);
+    float d = static_cast<float>(radius);
+    if (d > w)
+        d = w;
+    if (d > h)
+        d = h;
+    if (d < 2.0f) {
+        path.AddRectangle(Gdiplus::RectF(x, y, w, h));
+        return;
+    }
+    path.AddArc(x, y, d, d, 180.0f, 90.0f);
+    path.AddArc(x + w - d, y, d, d, 270.0f, 90.0f);
+    path.AddArc(x + w - d, y + h - d, d, d, 0.0f, 90.0f);
+    path.AddArc(x, y + h - d, d, d, 90.0f, 90.0f);
+    path.CloseFigure();
+}
+
 void roundCard(HDC hdc, const RECT& rc, int radius, COLORREF fill, COLORREF border) {
-    Brush b(fill);
-    Pen p(1, border);
-    HGDIOBJ oldB = SelectObject(hdc, b.h);
-    HGDIOBJ oldP = SelectObject(hdc, p.h);
-    RoundRect(hdc, rc.left, rc.top, rc.right, rc.bottom, radius, radius);
-    SelectObject(hdc, oldB);
-    SelectObject(hdc, oldP);
+    Gfx gfx(hdc);
+    Gdiplus::GraphicsPath path;
+    addRoundedRect(path, rc, radius);
+    Gdiplus::SolidBrush b(gcol(fill));
+    gfx.g.FillPath(&b, &path);
+    Gdiplus::Pen p(gcol(border), 1.0f);
+    gfx.g.DrawPath(&p, &path);
 }
 
 void circle(HDC hdc, const RECT& rc, COLORREF fill, COLORREF border, int borderW) {
-    Brush b(fill);
-    Pen p(borderW, border);
-    HGDIOBJ oldB = SelectObject(hdc, b.h);
-    HGDIOBJ oldP = SelectObject(hdc, p.h);
-    Ellipse(hdc, rc.left, rc.top, rc.right, rc.bottom);
-    SelectObject(hdc, oldB);
-    SelectObject(hdc, oldP);
+    Gfx gfx(hdc);
+    const float x = static_cast<float>(rc.left), y = static_cast<float>(rc.top);
+    const float w = static_cast<float>(rc.right - rc.left);
+    const float h = static_cast<float>(rc.bottom - rc.top);
+    Gdiplus::SolidBrush b(gcol(fill));
+    gfx.g.FillEllipse(&b, x, y, w, h);
+    if (borderW > 0) {
+        GpPen p(static_cast<float>(borderW), border);
+        const float hw = borderW / 2.0f;
+        gfx.g.DrawEllipse(&p.p, x + hw, y + hw, w - borderW, h - borderW);
+    }
 }
 
 }  // namespace
@@ -308,29 +357,34 @@ void Ui::drawToggle(HDC hdc, const RECT& rc, bool on) {
 
 void Ui::drawModeIcon(HDC hdc, const RECT& rc, HitId which, bool active) {
     const COLORREF col = active ? RGB(0x1a, 0x1a, 0x1a) : RGB(0xcf, 0xcf, 0xcf);
-    Pen p(S(2), col);
-    HGDIOBJ oldP = SelectObject(hdc, p.h);
-    HGDIOBJ oldB = SelectObject(hdc, GetStockObject(NULL_BRUSH));
-    const int cx = (rc.left + rc.right) / 2, cy = (rc.top + rc.bottom) / 2;
+    Gfx gfx(hdc);
+    GpPen p(static_cast<float>(S(2)), col);
+    const float cx = (rc.left + rc.right) / 2.0f, cy = (rc.top + rc.bottom) / 2.0f;
     if (which == HitModeOff) {
-        Ellipse(hdc, cx - S(9), cy - S(9), cx + S(9), cy + S(9));
+        const float r = static_cast<float>(S(9));
+        gfx.g.DrawEllipse(&p.p, cx - r, cy - r, r * 2.0f, r * 2.0f);
     } else if (which == HitModeAnc) {
-        // sound waves
+        // sound waves radiating to the right, from a small source dot
         for (int i = 0; i < 3; ++i) {
-            const int r = S(6) + i * S(5);
-            Arc(hdc, cx - r, cy - r, cx + r, cy + r, cx + r, cy - S(3), cx + r, cy + S(3));
+            const float r = static_cast<float>(S(6) + i * S(5));
+            gfx.g.DrawArc(&p.p, cx - r, cy - r, r * 2.0f, r * 2.0f, -55.0f, 110.0f);
         }
+        Gdiplus::SolidBrush b(gcol(col));
+        const float dr = static_cast<float>(S(2));
+        gfx.g.FillEllipse(&b, cx - dr, cy - dr, dr * 2.0f, dr * 2.0f);
     } else {
-        // person + radiating arcs
-        Ellipse(hdc, cx - S(4), cy - S(11), cx + S(4), cy - S(3));
-        Arc(hdc, cx - S(9), cy - S(2), cx + S(9), cy + S(14), cx - S(9), cy + S(8), cx + S(9), cy + S(8));
+        // person: head, shoulders, and radiating arcs
+        const float hr = static_cast<float>(S(4));
+        const float hy = cy - static_cast<float>(S(7));
+        gfx.g.DrawEllipse(&p.p, cx - hr, hy - hr, hr * 2.0f, hr * 2.0f);
+        const float sr = static_cast<float>(S(9));
+        const float sy = cy + static_cast<float>(S(6));
+        gfx.g.DrawArc(&p.p, cx - sr, sy - sr, sr * 2.0f, sr * 2.0f, 25.0f, 130.0f);
         for (int i = 0; i < 2; ++i) {
-            const int r = S(13) + i * S(5);
-            Arc(hdc, cx - r, cy - r, cx + r, cy + r, cx + r, cy - S(4), cx + r, cy + S(4));
+            const float r = static_cast<float>(S(13) + i * S(5));
+            gfx.g.DrawArc(&p.p, cx - r, cy - r, r * 2.0f, r * 2.0f, -55.0f, 110.0f);
         }
     }
-    SelectObject(hdc, oldP);
-    SelectObject(hdc, oldB);
 }
 
 static void drawText(HDC hdc, HFONT f, COLORREF col, int x, int y, int w, int h,
@@ -359,22 +413,23 @@ void Ui::paint(HDC hdc) {
     for (const Hit& ht : hits_) {
         if (ht.id == HitMenu || ht.id == HitPower) {
             circle(hdc, ht.rc, c_.bg, c_.circleBorder, S(2));
-            const int cx = (ht.rc.left + ht.rc.right) / 2, cy = (ht.rc.top + ht.rc.bottom) / 2;
-            Pen p(S(2), RGB(0xd7, 0xd7, 0xd7));
-            HGDIOBJ oldP = SelectObject(hdc, p.h);
-            HGDIOBJ oldB = SelectObject(hdc, GetStockObject(NULL_BRUSH));
+            const float cx = (ht.rc.left + ht.rc.right) / 2.0f;
+            const float cy = (ht.rc.top + ht.rc.bottom) / 2.0f;
+            Gfx gfx(hdc);
+            GpPen p(static_cast<float>(S(2)), RGB(0xd7, 0xd7, 0xd7));
             if (ht.id == HitMenu) {
+                const float hw = static_cast<float>(S(6));
                 for (int i = -1; i <= 1; ++i) {
-                    MoveToEx(hdc, cx - S(6), cy + i * S(5), nullptr);
-                    LineTo(hdc, cx + S(6), cy + i * S(5));
+                    const float yy = cy + i * static_cast<float>(S(5));
+                    gfx.g.DrawLine(&p.p, cx - hw, yy, cx + hw, yy);
                 }
             } else {
-                Arc(hdc, cx - S(7), cy - S(7), cx + S(7), cy + S(7), cx + S(2), cy - S(7), cx - S(2), cy - S(7));
-                MoveToEx(hdc, cx, cy - S(7), nullptr);
-                LineTo(hdc, cx, cy + S(1));
+                // power symbol: ring with a gap at the top, plus the stem
+                const float r = static_cast<float>(S(7));
+                gfx.g.DrawArc(&p.p, cx - r, cy - r, r * 2.0f, r * 2.0f, 330.0f, 240.0f);
+                gfx.g.DrawLine(&p.p, cx, cy - r - static_cast<float>(S(1)), cx,
+                               cy + static_cast<float>(S(1)));
             }
-            SelectObject(hdc, oldP);
-            SelectObject(hdc, oldB);
         }
     }
     y += S(52);
@@ -391,20 +446,28 @@ void Ui::paint(HDC hdc) {
 
         // battery glyph + %
         {
-            const int bx = pad, by = rowY + S(28), bw = S(30), bh = S(15);
-            Pen p(S(2), c_.muted);
-            HGDIOBJ oldP = SelectObject(hdc, p.h);
-            HGDIOBJ oldB = SelectObject(hdc, GetStockObject(NULL_BRUSH));
-            Rectangle(hdc, bx, by, bx + bw, by + bh);
-            Brush nb(c_.muted);
-            RECT nub{ bx + bw + 1, by + bh / 2 - S(3), bx + bw + S(4), by + bh / 2 + S(3) };
-            FillRect(hdc, &nub, nb.h);
-            SelectObject(hdc, oldP);
-            SelectObject(hdc, oldB);
+            Gfx gfx(hdc);
+            const float bx = static_cast<float>(pad), by = static_cast<float>(rowY + S(28));
+            const float bw = static_cast<float>(S(30)), bh = static_cast<float>(S(15));
+            RECT body{ pad, rowY + S(28), pad + S(30), rowY + S(28) + S(15) };
+            Gdiplus::GraphicsPath path;
+            addRoundedRect(path, body, S(6));
+            Gdiplus::SolidBrush bg(gcol(c_.bg));
+            gfx.g.FillPath(&bg, &path);
+            GpPen pen(1.5f, c_.muted);
+            gfx.g.DrawPath(&pen.p, &path);
+            // nub
+            Gdiplus::SolidBrush nb(gcol(c_.muted));
+            gfx.g.FillRectangle(&nb, bx + bw + 1.0f, by + bh / 2.0f - static_cast<float>(S(3)),
+                                static_cast<float>(S(3)), static_cast<float>(S(6)));
             if (dev_.connected && dev_.battery >= 0) {
-                const int fw = (bw - S(6)) * dev_.battery / 100;
-                RECT fill{ bx + S(3), by + S(3), bx + S(3) + fw, by + bh - S(3) };
-                fillRect(hdc, fill, c_.green);
+                const float fw = (bw - static_cast<float>(S(6))) * dev_.battery / 100.0f;
+                if (fw > 1.0f) {
+                    Gdiplus::SolidBrush fb(gcol(c_.green));
+                    gfx.g.FillRectangle(&fb, bx + static_cast<float>(S(3)),
+                                        by + static_cast<float>(S(3)), fw,
+                                        bh - static_cast<float>(S(6)));
+                }
             }
         }
         std::wstring pct = (dev_.connected && dev_.battery >= 0)
@@ -512,13 +575,18 @@ void Ui::paint(HDC hdc) {
         drawText(hdc, fNormal_, c_.text, cardX, y, cardW - S(40), S(48), cur, DT_RIGHT);
         // chevron
         {
-            const int cx = cardX + cardW - S(24), cy = y + S(24);
-            Pen p(S(2), c_.amber);
-            HGDIOBJ oldP = SelectObject(hdc, p.h);
-            MoveToEx(hdc, cx - S(5), cy + (eqExpanded_ ? S(2) : -S(2)), nullptr);
-            LineTo(hdc, cx, cy + (eqExpanded_ ? -S(3) : S(3)));
-            LineTo(hdc, cx + S(5), cy + (eqExpanded_ ? S(2) : -S(2)));
-            SelectObject(hdc, oldP);
+            Gfx gfx(hdc);
+            GpPen p(static_cast<float>(S(2)), c_.amber);
+            const float cx = static_cast<float>(cardX + cardW - S(24));
+            const float cy = static_cast<float>(y + S(24));
+            const float dx = static_cast<float>(S(5)), dy = static_cast<float>(S(3));
+            if (eqExpanded_) {
+                gfx.g.DrawLine(&p.p, cx - dx, cy + dy, cx, cy - dy);
+                gfx.g.DrawLine(&p.p, cx, cy - dy, cx + dx, cy + dy);
+            } else {
+                gfx.g.DrawLine(&p.p, cx - dx, cy - dy, cx, cy + dy);
+                gfx.g.DrawLine(&p.p, cx, cy + dy, cx + dx, cy - dy);
+            }
         }
         int ry = y + S(48);
         if (eqExpanded_) {
